@@ -80,6 +80,6 @@ def webhook():
     return jsonify({"status": "success"})
 
 # إعداد قاعدة البيانات عند تشغيل التطبيق
-if name == "__main__":
+if __name__ == "__main__":
     setup_database()
     app.run(debug=True)
