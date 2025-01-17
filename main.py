@@ -1,12 +1,12 @@
-from flask import Flask, request, jsonify
+import os
 import sqlite3
 import requests
+from telebot import TeleBot, types
 
-app = Flask(__name__)
-
-# توكن البوت ورابط القناة
-TOKEN = "7818149231:AAE7myiU3_omboOmq2YDlQBd5x0luMiSXO0"
-CHANNEL_LINK = "https://t.me/d_tt3"
+# توكن البوت (تأكد من إضافته كمتغير بيئة إذا كنت تستخدم خدمات مثل Vercel)
+TOKEN = os.getenv("TOKEN")  # ضع التوكن الخاص بك هنا إذا كنت تعمل محليًا
+CHANNEL_LINK = "https://t.me/d_tt3"  # رابط القناة
+bot = TeleBot(TOKEN)
 
 # إعداد قاعدة البيانات
 def setup_database():
@@ -21,7 +21,7 @@ def setup_database():
     conn.commit()
     conn.close()
 
-# إضافة مستخدم جديد
+# إضافة مستخدم جديد إلى قاعدة البيانات
 def add_user(user_id, username):
     conn = sqlite3.connect("bot_data.db")
     cursor = conn.cursor()
@@ -29,7 +29,7 @@ def add_user(user_id, username):
     conn.commit()
     conn.close()
 
-# تحديث البيانات
+# تحديث عدد الزيارات أو الدعوات
 def update_user_data(user_id, column):
     conn = sqlite3.connect("bot_data.db")
     cursor = conn.cursor()
@@ -37,7 +37,7 @@ def update_user_data(user_id, column):
     conn.commit()
     conn.close()
 
-# استرجاع ترتيب المستخدمين
+# استرجاع ترتيب الجترافي
 def get_ranking(column):
     conn = sqlite3.connect("bot_data.db")
     cursor = conn.cursor()
@@ -57,29 +57,97 @@ def is_subscribed(user_id):
         print(f"Error checking subscription: {e}")
         return False
 
-# نقطة البداية (اختبار)
-@app.route("/")
-def home():
-    return jsonify({"message": "مرحباً! البوت يعمل على Vercel!"})
+# بدء البوت
+@bot.message_handler(commands=['start'])
+def start(message):
+    user_id = message.from_user.id
+    username = message.from_user.username or "Unknown"
 
-# استرجاع ترتيب المستخدمين
-@app.route("/ranking", methods=["GET"])
-def ranking():
-    column = request.args.get("column", "visit_count")
-    ranking_data = get_ranking(column)
-    return jsonify({"ranking": ranking_data})
+    if not is_subscribed(user_id):
+        bot.send_message(
+            message.chat.id,
+            f"⚠️ عذراً، يجب الاشتراك في القناة أولاً: [اضغط هنا]({CHANNEL_LINK})",
+            parse_mode="Markdown"
+        )
+        return
 
-# استقبال بيانات من Webhook
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    data = request.json
-    if data and "message" in data:
-        user_id = data["message"]["from"]["id"]
-        username = data["message"]["from"].get("username", "Unknown")
-        add_user(user_id, username)
-    return jsonify({"status": "success"})
+    add_user(user_id, username)
+    bot.send_message(
+        message.chat.id,
+        "مرحباً! 😊 اختر من القائمة: 👇",
+        reply_markup=main_menu()
+    )
 
-# إعداد قاعدة البيانات عند تشغيل التطبيق
+# القائمة الرئيسية
+def main_menu():
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    markup.add(
+        types.KeyboardButton("👤 من زار ملفي الشخصي"),
+        types.KeyboardButton("💌 الأشخاص الذين دعوتهم"),
+        types.KeyboardButton("📈 ترتيب الجترافي"),
+        types.KeyboardButton("❓ طريقة استخدام البوت"),
+        types.KeyboardButton("📖 تعليمات وخطوات الدعوة")
+    )
+    return markup
+
+# عرض عدد الزيارات
+@bot.message_handler(func=lambda message: message.text == "👤 من زار ملفي الشخصي")
+def profile_visits(message):
+    user_id = message.from_user.id
+    conn = sqlite3.connect("bot_data.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT visit_count FROM users WHERE user_id = ?", (user_id,))
+    result = cursor.fetchone()
+    visit_count = result[0] if result else 0
+    bot.send_message(message.chat.id, f"📊 عدد الأشخاص الذين زاروا ملفك: {visit_count}")
+
+# عرض عدد الدعوات
+@bot.message_handler(func=lambda message: message.text == "💌 الأشخاص الذين دعوتهم")
+def invites(message):
+    user_id = message.from_user.id
+    conn = sqlite3.connect("bot_data.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT invite_count FROM users WHERE user_id = ?", (user_id,))
+    result = cursor.fetchone()
+    invite_count = result[0] if result else 0
+    bot.send_message(message.chat.id, f"📊 عدد الأشخاص الذين دعوتهم: {invite_count}")
+
+# عرض ترتيب الجترافي
+@bot.message_handler(func=lambda message: message.text == "📈 ترتيب الجترافي")
+def show_ranking(message):
+    ranking = get_ranking("visit_count")
+    text = "🏆 ترتيب الجترافي:\n\n"
+    for i, (username, score) in enumerate(ranking, 1):
+        text += f"{i}. @{username} - {score} زيارة\n"
+    bot.send_message(message.chat.id, text)
+
+# شرح طريقة البوت
+@bot.message_handler(func=lambda message: message.text == "❓ طريقة استخدام البوت")
+def how_to_use(message):
+    bot.send_message(
+        message.chat.id,
+        "✨ هذا البوت يساعدك في:\n"
+        "- 👤 معرفة من زار ملفك الشخصي.\n"
+        "- 💌 معرفة الأشخاص الذين دعوتهم.\n"
+        "- 📈 مشاهدة ترتيبك بين الأعضاء.\n\n"
+        "🚀 استمر بدعوة أصدقائك للحصول على ترتيب أعلى!"
+    )
+
+# تعليمات وخطوات الدعوة
+@bot.message_handler(func=lambda message: message.text == "📖 تعليمات وخطوات الدعوة")
+def instructions(message):
+    bot.send_message(
+        message.chat.id,
+        f"🌟 **خطوات الدعوة والتفاعل مع البوت:**\n"
+        "1️⃣ شارك رابط الدعوة الخاص بك مع أصدقائك.\n"
+        "2️⃣ اجعلهم يشتركون في القناة الرسمية: [اضغط هنا]({CHANNEL_LINK}).\n"
+        "3️⃣ عندما ينضم صديقك، ستزيد نقاط الدعوة لديك تلقائيًا.\n\n"
+        "📊 كلما زادت نقاطك، ارتفع ترتيبك في الجترافي!",
+        parse_mode="Markdown"
+    )
+
+# تشغيل البوت
 if __name__ == "__main__":
     setup_database()
-    app.run(debug=True)
+    bot.polling()
+    
